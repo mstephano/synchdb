@@ -863,24 +863,17 @@ alter_tbname(const char * from, const char * to)
 		if (table2 && schema2)
 		{
 			/* 'to' expressed as schema.table */
-			const char *quoted_schema2 = quote_identifier(schema2);
-			const char *quoted_from = quote_identifier(from);
-			const char *quoted_table2 = quote_identifier(table2);
-			const char *quoted_schema = quote_identifier(schema);
-			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; "
-					"ALTER TABLE %s RENAME TO %s; "
-					"ALTER TABLE %s.%s SET SCHEMA %s;",
-					quoted_schema2, quoted_from, quoted_table2, quoted_schema, quoted_table2, quoted_schema2);
+		appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS \"%s\"; "
+				"ALTER TABLE \"%s\" RENAME TO \"%s\"; "
+				"ALTER TABLE \"%s\".\"%s\" SET SCHEMA \"%s\";",
+				schema2, from, table2, schema, table2, schema2);
 		}
 		else
 		{
 			/* 'to' expressed as table */
-			const char *quoted_from = quote_identifier(from);
-			const char *quoted_table2 = quote_identifier(table2);
-			const char *quoted_schema = quote_identifier(schema);
-			appendStringInfo(&strinfo, "ALTER TABLE %s RENAME TO %s;"
-					"ALTER TABLE %s.%s SET SCHEMA public;",
-					quoted_from, quoted_table2, quoted_schema, quoted_table2);
+		appendStringInfo(&strinfo, "ALTER TABLE \"%s\" RENAME TO \"%s\";"
+				"ALTER TABLE \"%s\".\"%s\" SET SCHEMA public;",
+				from, table2, schema, table2);
 		}
 	}
 	else
@@ -890,21 +883,16 @@ alter_tbname(const char * from, const char * to)
 		if (table2 && schema2)
 		{
 			/* 'to' expressed as schema.table */
-			const char *quoted_schema2 = quote_identifier(schema2);
-			const char *quoted_from = quote_identifier(from);
-			const char *quoted_table2 = quote_identifier(table2);
-			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; "
-					"ALTER TABLE %s RENAME TO %s; "
-					"ALTER TABLE %s SET SCHEMA %s;",
-					quoted_schema2, quoted_from, quoted_table2, quoted_table2, quoted_schema2);
+		appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS \"%s\"; "
+				"ALTER TABLE \"%s\" RENAME TO \"%s\"; "
+				"ALTER TABLE \"%s\" SET SCHEMA \"%s\";",
+				schema2, from, table2, table2, schema2);
 		}
 		else
 		{
 			/* 'to' expressed as table */
-			const char *quoted_from = quote_identifier(from);
-			const char *quoted_table2 = quote_identifier(table2);
-			appendStringInfo(&strinfo, "ALTER TABLE %s RENAME TO %s;",
-					quoted_from, quoted_table2);
+	appendStringInfo(&strinfo, "ALTER TABLE \"%s\" RENAME TO \"%s\";",
+			from, table2);
 		}
 	}
 
@@ -929,13 +917,8 @@ alter_attname(const char * tbname, const char * from, const char * to)
 		return ret;
 
 	initStringInfo(&strinfo);
-	{
-		const char *quoted_tbname = quote_identifier(tbname);
-		const char *quoted_from = quote_identifier(from);
-		const char *quoted_to = quote_identifier(to);
-		appendStringInfo(&strinfo, "ALTER TABLE %s RENAME COLUMN %s TO %s;",
-				quoted_tbname, quoted_from, quoted_to);
-	}
+	appendStringInfo(&strinfo, "ALTER TABLE \"%s\" RENAME COLUMN \"%s\" TO \"%s\";",
+			tbname, from, to);
 
 	elog(WARNING, "renaming table ('%s')'s column from '%s' to '%s' with query: %s",
 			tbname, from, to, strinfo.data);
@@ -957,12 +940,8 @@ alter_atttype(const char * tbname, const char * from, const char * to, int types
 		return ret;
 
 	initStringInfo(&strinfo);
-	{
-		const char *quoted_tbname = quote_identifier(tbname);
-		const char *quoted_from = quote_identifier(from);
-		appendStringInfo(&strinfo, "ALTER TABLE %s ALTER COLUMN %s SET DATA TYPE %s",
-				quoted_tbname, quoted_from, to);
-	}
+	appendStringInfo(&strinfo, "ALTER TABLE \"%s\" ALTER COLUMN \"%s\" SET DATA TYPE %s",
+			tbname, from, to);
 
 	if (typesz > 0)
 	{
@@ -970,7 +949,7 @@ alter_atttype(const char * tbname, const char * from, const char * to, int types
 	}
 
 	if (convertfunc)
-		appendStringInfo(&strinfo, " USING %s::%s;", tbname, convertfunc);
+		appendStringInfo(&strinfo, " USING \"%s\"::%s;", tbname, convertfunc);
 	else
 		appendStringInfo(&strinfo, ";");
 
@@ -1393,7 +1372,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 		default:
 		{
 			/* unknown type, no special handling - may error out later when applying to PostgreSQL */
-			appendStringInfo(strinfo, " %s %s ", col->name, col->typeName);
+			appendStringInfo(strinfo, " \"%s\" %s ", col->name, col->typeName);
 			break;
 		}
 	}
@@ -1495,11 +1474,8 @@ composeAlterColumnClauses(const char * objid, ConnectorType type, List * dbzcols
 					 * synchdb can receive a default expression not supported in postgresql.
 					 * so for now, we always set to default null. todo
 					 */
-					{
-						const char *quoted_column = quote_identifier(mappedColumnName);
-						appendStringInfo(&strinfo, "ALTER COLUMN %s SET DEFAULT %s",
-								quoted_column, "NULL");
-					}
+					appendStringInfo(&strinfo, "ALTER COLUMN \"%s\" SET DEFAULT %s",
+							mappedColumnName, "NULL");
 				}
 				else
 				{
@@ -4592,12 +4568,9 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				/* trigger pg's error shutdown routine */
 				elog(ERROR, "%s", msg);
 			}
-		/* make schema points to db */
-		schema = db;
-		{
-			const char *quoted_schema = quote_identifier(schema);
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s.%s;", quoted_schema, quoted_table);
+			/* make schema points to db */
+			schema = db;
+			appendStringInfo(&strinfo, "DROP TABLE IF EXISTS \"%s\".\"%s\";", schema, table);
 			pgddl->schema = pstrdup(schema);
 			pgddl->tbname = pstrdup(table);
 		}
@@ -4648,24 +4621,21 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-		if (schema && table)
-		{
-			/* table stays as table under the schema */
-			const char *quoted_schema = quote_identifier(schema);
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "ALTER TABLE %s.%s ", quoted_schema, quoted_table);
-			pgddl->schema = pstrdup(schema);
-			pgddl->tbname = pstrdup(table);
-		}
-		else if (!schema && table)
-		{
-			/* table stays as table but no schema */
-			const char *quoted_table = quote_identifier(table);
-			schema = pstrdup("public");
-			appendStringInfo(&strinfo, "ALTER TABLE %s ", quoted_table);
-			pgddl->schema = pstrdup("public");
-			pgddl->tbname = pstrdup(table);
-		}
+			if (schema && table)
+			{
+				/* table stays as table under the schema */
+				appendStringInfo(&strinfo, "ALTER TABLE \"%s\".\"%s\" ", schema, table);
+				pgddl->schema = pstrdup(schema);
+				pgddl->tbname = pstrdup(table);
+			}
+			else if (!schema && table)
+			{
+				/* table stays as table but no schema */
+				schema = pstrdup("public");
+				appendStringInfo(&strinfo, "ALTER TABLE \"%s\" ", table);
+				pgddl->schema = pstrdup("public");
+				pgddl->tbname = pstrdup(table);
+			}
 		}
 		else
 		{
@@ -4692,12 +4662,9 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 			for (i = 0; i < strlen(table); i++)
 				table[i] = (char) pg_tolower((unsigned char) table[i]);
 
-		/* make schema points to db */
-		schema = db;
-		{
-			const char *quoted_schema = quote_identifier(schema);
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "ALTER TABLE %s.%s ", quoted_schema, quoted_table);
+			/* make schema points to db */
+			schema = db;
+			appendStringInfo(&strinfo, "ALTER TABLE \"%s\".\"%s\" ", schema, table);
 			pgddl->schema = pstrdup(schema);
 			pgddl->tbname = pstrdup(table);
 		}
@@ -5284,8 +5251,8 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 						 * synchdb can receive a default expression not supported in postgresql.
 						 * so for now, we always set to default null. todo
 						 */
-						appendStringInfo(&strinfo, "ALTER COLUMN %s SET DEFAULT %s",
-								mappedColumnName, "NULL");
+				appendStringInfo(&strinfo, "ALTER COLUMN \"%s\" SET DEFAULT %s",
+						mappedColumnName, "NULL");
 					}
 					else
 					{
@@ -5390,24 +5357,21 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-		if (schema && table)
-		{
-			/* table stays as table under the schema */
-			const char *quoted_schema = quote_identifier(schema);
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "TRUNCATE TABLE %s.%s;", quoted_schema, quoted_table);
-			pgddl->schema = pstrdup(schema);
-			pgddl->tbname = pstrdup(table);
-		}
-		else if (!schema && table)
-		{
-			/* table stays as table but no schema */
-			const char *quoted_table = quote_identifier(table);
-			schema = pstrdup("public");
-			appendStringInfo(&strinfo, "TRUNCATE TABLE %s;", quoted_table);
-			pgddl->schema = pstrdup("public");
-			pgddl->tbname = pstrdup(table);
-		}
+			if (schema && table)
+			{
+				/* table stays as table under the schema */
+				appendStringInfo(&strinfo, "TRUNCATE TABLE \"%s\".\"%s\";", schema, table);
+				pgddl->schema = pstrdup(schema);
+				pgddl->tbname = pstrdup(table);
+			}
+			else if (!schema && table)
+			{
+				/* table stays as table but no schema */
+				schema = pstrdup("public");
+				appendStringInfo(&strinfo, "TRUNCATE TABLE %s;", table);
+				pgddl->schema = pstrdup("public");
+				pgddl->tbname = pstrdup(table);
+			}
 		}
 		else
 		{
@@ -5426,12 +5390,9 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				/* trigger pg's error shutdown routine */
 				elog(ERROR, "%s", msg);
 			}
-		/* make schema points to db */
-		schema = db;
-		{
-			const char *quoted_schema = quote_identifier(schema);
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "TRUNCATE TABLE %s.%s;", quoted_schema, quoted_table);
+			/* make schema points to db */
+			schema = db;
+			appendStringInfo(&strinfo, "TRUNCATE TABLE \"%s\".\"%s\";", schema, table);
 			pgddl->schema = pstrdup(schema);
 			pgddl->tbname = pstrdup(table);
 		}
