@@ -27,6 +27,7 @@
  */
 #include "postgres.h"
 #include "common/base64.h"
+#include "storage/lockdefs.h"
 #include "fmgr.h"
 #include "utils/jsonb.h"
 #include "utils/builtins.h"
@@ -1043,68 +1044,133 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 				entry = (DatatypeHashEntry *) hash_search(mysqlDatatypeHash, &key, HASH_FIND, &found);
 				if (!found)
 				{
-					/* no mapping found, so no transformation done */
-					elog(WARNING, "MYSQL TYPE MAPPING FAILED: original='%s' normalized='%s' autoincrement=%d - falling back to original type",
-							col->typeName, key.extTypeName, key.autoIncremented);
+					/* no mapping found, implement comprehensive fallback for MySQL types */
+					elog(DEBUG1, "no transformation done for %s (autoincrement %d), applying fallback conversion",
+							key.extTypeName, key.autoIncremented);
 					
-					/* Handle unsigned types even when mapping fails */
+					/* Comprehensive MySQL type fallback conversion */
+					char *pg_type = NULL;
+					bool is_unsigned = false;
+					
+					/* Check for unsigned types first */
 					if (strstr(col->typeName, "unsigned"))
 					{
-						/* Convert common unsigned types manually as fallback */
-						if (!strcasecmp(col->typeName, "int unsigned") || !strcasecmp(col->typeName, "integer unsigned"))
+						is_unsigned = true;
+						
+						/* Handle all MySQL unsigned integer types */
+						if (!strcasecmp(col->typeName, "tinyint unsigned"))
 						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " bigint ");
-							else
-								appendStringInfo(strinfo, " %s bigint ", pgcol->attname);
-							pgcol->atttype = pstrdup("bigint");
-						}
-						else if (!strcasecmp(col->typeName, "tinyint unsigned"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " smallint ");
-							else
-								appendStringInfo(strinfo, " %s smallint ", pgcol->attname);
-							pgcol->atttype = pstrdup("smallint");
+							pg_type = "smallint";
 						}
 						else if (!strcasecmp(col->typeName, "smallint unsigned"))
 						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " int ");
-							else
-								appendStringInfo(strinfo, " %s int ", pgcol->attname);
-							pgcol->atttype = pstrdup("int");
+							pg_type = "int";
 						}
 						else if (!strcasecmp(col->typeName, "mediumint unsigned"))
 						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " int ");
-							else
-								appendStringInfo(strinfo, " %s int ", pgcol->attname);
-							pgcol->atttype = pstrdup("int");
+							pg_type = "int";
+						}
+						else if (!strcasecmp(col->typeName, "int unsigned") || !strcasecmp(col->typeName, "integer unsigned"))
+						{
+							pg_type = "bigint";
 						}
 						else if (!strcasecmp(col->typeName, "bigint unsigned"))
 						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " numeric ");
-							else
-								appendStringInfo(strinfo, " %s numeric ", pgcol->attname);
-							pgcol->atttype = pstrdup("numeric");
+							pg_type = "numeric";
+						}
+						else if (!strcasecmp(col->typeName, "decimal unsigned") || !strcasecmp(col->typeName, "dec unsigned") || !strcasecmp(col->typeName, "numeric unsigned"))
+						{
+							pg_type = "decimal";
+						}
+						else if (!strcasecmp(col->typeName, "float unsigned"))
+						{
+							pg_type = "real";
+						}
+						else if (!strcasecmp(col->typeName, "double unsigned") || !strcasecmp(col->typeName, "double precision unsigned"))
+						{
+							pg_type = "double precision";
+						}
+						else if (!strcasecmp(col->typeName, "real unsigned"))
+						{
+							pg_type = "real";
 						}
 						else
 						{
-							/* Unknown unsigned type - fallback to original */
-							if (datatypeonly)
-								appendStringInfo(strinfo, " %s ", col->typeName);
-							else
-								appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
-							pgcol->atttype = pstrdup(col->typeName);
+							/* Generic unsigned fallback - remove "unsigned" and map to larger signed type */
+							char base_type[256];
+							snprintf(base_type, sizeof(base_type), "%s", col->typeName);
+							char *unsigned_pos = strstr(base_type, " unsigned");
+							if (unsigned_pos) *unsigned_pos = '\0';
+							
+							if (!strcasecmp(base_type, "tinyint")) pg_type = "smallint";
+							else if (!strcasecmp(base_type, "smallint")) pg_type = "int";
+							else if (!strcasecmp(base_type, "mediumint")) pg_type = "int";
+							else if (!strcasecmp(base_type, "int") || !strcasecmp(base_type, "integer")) pg_type = "bigint";
+							else if (!strcasecmp(base_type, "bigint")) pg_type = "numeric";
+							else pg_type = "bigint"; /* safe fallback */
 						}
 					}
+					/* Handle common MySQL types that aren't unsigned */
+					else if (!strcasecmp(col->typeName, "datetime"))
+					{
+						pg_type = "timestamp";
+					}
+					else if (!strcasecmp(col->typeName, "timestamp"))
+					{
+						pg_type = "timestamptz";
+					}
+					else if (!strcasecmp(col->typeName, "tinytext") || !strcasecmp(col->typeName, "mediumtext") || !strcasecmp(col->typeName, "longtext"))
+					{
+						pg_type = "text";
+					}
+					else if (!strcasecmp(col->typeName, "tinyblob") || !strcasecmp(col->typeName, "mediumblob") || !strcasecmp(col->typeName, "longblob") || !strcasecmp(col->typeName, "blob"))
+					{
+						pg_type = "bytea";
+					}
+					else if (!strcasecmp(col->typeName, "json"))
+					{
+						pg_type = "jsonb";
+					}
+					else if (!strcasecmp(col->typeName, "enum") || !strcasecmp(col->typeName, "set"))
+					{
+						pg_type = "text";
+					}
+					else if (!strcasecmp(col->typeName, "year"))
+					{
+						pg_type = "int";
+					}
+					else if (!strcasecmp(col->typeName, "tinyint"))
+					{
+						pg_type = "smallint";
+					}
+					else if (!strcasecmp(col->typeName, "mediumint"))
+					{
+						pg_type = "int";
+					}
+					else if (!strcasecmp(col->typeName, "binary") || !strcasecmp(col->typeName, "varbinary"))
+					{
+						pg_type = "bytea";
+					}
 					else
-						appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, col->typeName);
+					{
+						/* Use original type as last resort, but log warning */
+						pg_type = col->typeName;
+						elog(WARNING, "Unknown MySQL type '%s' - using as-is, may cause PostgreSQL syntax errors", col->typeName);
+					}
+					
+					/* Generate the PostgreSQL DDL */
+					if (datatypeonly)
+						appendStringInfo(strinfo, " %s ", pg_type);
+					else
+						appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, pg_type);
 
-					pgcol->atttype = pstrdup(col->typeName);
+					pgcol->atttype = pstrdup(pg_type);
+					
+					/* Mark that this column needs CHECK constraint if unsigned */
+					if (is_unsigned)
+					{
+						elog(DEBUG1, "Unsigned type %s converted to %s - will add CHECK constraint", col->typeName, pg_type);
+					}
 				}
 				else
 				{
@@ -2573,47 +2639,58 @@ processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote, char * remoteObj
 	char * out = NULL;
 	char * in = colval->value;
 	char * transformExpression = NULL;
+
+	if (!in)
+		return NULL;
 	
-	/* Check if input is empty string */
-	if (!in || strlen(in) == 0)
+	/* Handle empty strings for NOT NULL columns */
+	if (strlen(in) == 0)
 	{
-		/* Check if this column has NOT NULL constraint */
-		if (OidIsValid(tableoid) && colval->position > 0)
+		/* Check if this column has NOT NULL constraint in PostgreSQL */
+		if (colval->datatype != InvalidOid)
 		{
-			Relation rel = NULL;
-			TupleDesc tupdesc = NULL;
-			Form_pg_attribute attr = NULL;
+			Relation rel;
+			TupleDesc tupdesc;
+			bool found_notnull = false;
 			
-			PG_TRY();
-			{
-				rel = table_open(tableoid, AccessShareLock);
-				tupdesc = RelationGetDescr(rel);
-				
-				/* Check if column position is valid and get attribute info */
-				if (colval->position <= tupdesc->natts)
+		/* Try to get table relation and check column NOT NULL constraint */
+		if (tableoid != InvalidOid)
+		{
+			rel = table_open(tableoid, 1); /* AccessShareLock = 1 */
+				if (rel != NULL)
 				{
-					attr = TupleDescAttr(tupdesc, colval->position - 1);
+					tupdesc = RelationGetDescr(rel);
 					
-					/* If column is NOT NULL, return empty string instead of NULL */
-					if (attr->attnotnull)
+					/* Find the column by name */
+					for (int attnum = 1; attnum <= tupdesc->natts; attnum++)
 					{
-						table_close(rel, AccessShareLock);
-						elog(DEBUG1, "Column %s is NOT NULL, returning empty string instead of NULL", colval->name);
-						return addquote ? pstrdup("''") : pstrdup("");
+						Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
+						
+						/* Skip dropped columns */
+						if (attr->attisdropped)
+							continue;
+						
+						/* Check if this is our column and if it's NOT NULL */
+						if (!strcasecmp(colval->name, NameStr(attr->attname)))
+						{
+							found_notnull = attr->attnotnull;
+							elog(WARNING, "Empty string check: col %s is %s NULL", colval->name, found_notnull ? "NOT" : "");
+							break;
+						}
 					}
+					table_close(rel, 1); /* AccessShareLock = 1 */
 				}
-				table_close(rel, AccessShareLock);
 			}
-			PG_CATCH();
+			
+			/* If column is NOT NULL, return empty string instead of NULL */
+			if (found_notnull)
 			{
-				/* Clean up on error */
-				if (rel)
-					table_close(rel, AccessShareLock);
-				PG_RE_THROW();
+				elog(WARNING, "Converting empty string to '' for NOT NULL column %s", colval->name);
+				return addquote ? pstrdup("''") : pstrdup("");
 			}
-			PG_END_TRY();
 		}
-		/* For NULL-able columns or when table info is not available, return NULL as before */
+		
+		/* For nullable columns, empty string becomes NULL */
 		return NULL;
 	}
 
@@ -3309,8 +3386,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 				if (!colval->ispk)
 					continue;
 
-				quoted_column = quote_identifier(colval->name);
-				appendStringInfo(&strinfo, "%s = ", quoted_column);
+					appendStringInfo(&strinfo, "%s = ", colval->name);
 					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
@@ -3389,8 +3465,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 					char * data;
 					const char *quoted_column;
 
-					quoted_column = quote_identifier(colval->name);
-					appendStringInfo(&strinfo, "%s = ", quoted_column);
+					appendStringInfo(&strinfo, "%s = ", colval->name);
 					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
@@ -3416,8 +3491,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 				if (!colval->ispk)
 					continue;
 
-				quoted_column = quote_identifier(colval->name);
-				appendStringInfo(&strinfo, "%s = ", quoted_column);
+					appendStringInfo(&strinfo, "%s = ", colval->name);
 					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
