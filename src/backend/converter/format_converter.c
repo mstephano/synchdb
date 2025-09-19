@@ -26,6 +26,7 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
+#include "common/base64.h"
 #include "fmgr.h"
 #include "utils/jsonb.h"
 #include "utils/builtins.h"
@@ -633,12 +634,12 @@ populate_primary_keys(StringInfoData * strinfo, const char * id, const char * js
 								if (isfirst)
 								{
 									appendStringInfo(strinfo, ", ADD PRIMARY KEY(");
-									appendStringInfo(strinfo, "%s,", value);
+									appendStringInfo(strinfo, "\"%s\",", value);
 									isfirst = false;
 								}
 								else
 								{
-									appendStringInfo(strinfo, "%s,", value);
+									appendStringInfo(strinfo, "\"%s\",", value);
 								}
 							}
 							else
@@ -646,12 +647,12 @@ populate_primary_keys(StringInfoData * strinfo, const char * id, const char * js
 								if (isfirst)
 								{
 									appendStringInfo(strinfo, "PRIMARY KEY(");
-									appendStringInfo(strinfo, "%s,", value);
+									appendStringInfo(strinfo, "\"%s\",", value);
 									isfirst = false;
 								}
 								else
 								{
-									appendStringInfo(strinfo, "%s,", value);
+									appendStringInfo(strinfo, "\"%s\",", value);
 								}
 							}
 						}
@@ -660,12 +661,12 @@ populate_primary_keys(StringInfoData * strinfo, const char * id, const char * js
 							if (isfirst)
 							{
 								appendStringInfo(strinfo, ", PRIMARY KEY(");
-								appendStringInfo(strinfo, "%s,", value);
+								appendStringInfo(strinfo, "\"%s\",", value);
 								isfirst = false;
 							}
 							else
 							{
-								appendStringInfo(strinfo, "%s,", value);
+								appendStringInfo(strinfo, "\"%s\",", value);
 							}
 						}
 						pfree(value);
@@ -1122,138 +1123,9 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 						}
 					}
 					else
-					{
-						/* Handle common MySQL types that need PostgreSQL conversion */
-						if (!strcasecmp(col->typeName, "datetime"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " timestamp ");
-							else
-								appendStringInfo(strinfo, " %s timestamp ", pgcol->attname);
-							pgcol->atttype = pstrdup("timestamp");
-						}
-						else if (!strcasecmp(col->typeName, "timestamp"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " timestamptz ");
-							else
-								appendStringInfo(strinfo, " %s timestamptz ", pgcol->attname);
-							pgcol->atttype = pstrdup("timestamptz");
-						}
-						else if (!strcasecmp(col->typeName, "tinytext"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " text ");
-							else
-								appendStringInfo(strinfo, " %s text ", pgcol->attname);
-							pgcol->atttype = pstrdup("text");
-						}
-						else if (!strcasecmp(col->typeName, "mediumtext"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " text ");
-							else
-								appendStringInfo(strinfo, " %s text ", pgcol->attname);
-							pgcol->atttype = pstrdup("text");
-						}
-						else if (!strcasecmp(col->typeName, "longtext"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " text ");
-							else
-								appendStringInfo(strinfo, " %s text ", pgcol->attname);
-							pgcol->atttype = pstrdup("text");
-						}
-						else if (!strcasecmp(col->typeName, "tinyblob"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " bytea ");
-							else
-								appendStringInfo(strinfo, " %s bytea ", pgcol->attname);
-							pgcol->atttype = pstrdup("bytea");
-						}
-						else if (!strcasecmp(col->typeName, "mediumblob"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " bytea ");
-							else
-								appendStringInfo(strinfo, " %s bytea ", pgcol->attname);
-							pgcol->atttype = pstrdup("bytea");
-						}
-						else if (!strcasecmp(col->typeName, "longblob"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " bytea ");
-							else
-								appendStringInfo(strinfo, " %s bytea ", pgcol->attname);
-							pgcol->atttype = pstrdup("bytea");
-						}
-						else if (!strcasecmp(col->typeName, "blob"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " bytea ");
-							else
-								appendStringInfo(strinfo, " %s bytea ", pgcol->attname);
-							pgcol->atttype = pstrdup("bytea");
-						}
-						else if (!strcasecmp(col->typeName, "json"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " jsonb ");
-							else
-								appendStringInfo(strinfo, " %s jsonb ", pgcol->attname);
-							pgcol->atttype = pstrdup("jsonb");
-						}
-						else if (!strcasecmp(col->typeName, "enum"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " text ");
-							else
-								appendStringInfo(strinfo, " %s text ", pgcol->attname);
-							pgcol->atttype = pstrdup("text");
-						}
-						else if (!strcasecmp(col->typeName, "set"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " text ");
-							else
-								appendStringInfo(strinfo, " %s text ", pgcol->attname);
-							pgcol->atttype = pstrdup("text");
-						}
-						else if (!strcasecmp(col->typeName, "year"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " int ");
-							else
-								appendStringInfo(strinfo, " %s int ", pgcol->attname);
-							pgcol->atttype = pstrdup("int");
-						}
-						else if (!strcasecmp(col->typeName, "tinyint"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " smallint ");
-							else
-								appendStringInfo(strinfo, " %s smallint ", pgcol->attname);
-							pgcol->atttype = pstrdup("smallint");
-						}
-						else if (!strcasecmp(col->typeName, "mediumint"))
-						{
-							if (datatypeonly)
-								appendStringInfo(strinfo, " int ");
-							else
-								appendStringInfo(strinfo, " %s int ", pgcol->attname);
-							pgcol->atttype = pstrdup("int");
-						}
-						else
-						{
-							/* Unknown type - use original */
-							if (datatypeonly)
-								appendStringInfo(strinfo, " %s ", col->typeName);
-							else
-								appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
-							pgcol->atttype = pstrdup(col->typeName);
-						}
-					}
+						appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, col->typeName);
+
+					pgcol->atttype = pstrdup(col->typeName);
 				}
 				else
 				{
@@ -1264,7 +1136,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 					if (datatypeonly)
 						appendStringInfo(strinfo, " %s ", entry->pgsqlTypeName);
 					else
-						appendStringInfo(strinfo, " %s %s ", pgcol->attname, entry->pgsqlTypeName);
+						appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, entry->pgsqlTypeName);
 
 					pgcol->atttype = pstrdup(entry->pgsqlTypeName);
 					if (entry->pgsqlTypeLength != -1)
@@ -1281,7 +1153,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 				if (datatypeonly)
 					appendStringInfo(strinfo, " %s ", entry->pgsqlTypeName);
 				else
-					appendStringInfo(strinfo, " %s %s ", pgcol->attname, entry->pgsqlTypeName);
+					appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, entry->pgsqlTypeName);
 
 				pgcol->atttype = pstrdup(entry->pgsqlTypeName);
 				if (entry->pgsqlTypeLength != -1)
@@ -1370,7 +1242,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 					if (datatypeonly)
 						appendStringInfo(strinfo, " %s ", col->typeName);
 					else
-						appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
+						appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, col->typeName);
 
 					pgcol->atttype = pstrdup(col->typeName);
 				}
@@ -1383,7 +1255,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 					if (datatypeonly)
 						appendStringInfo(strinfo, " %s ", entry->pgsqlTypeName);
 					else
-						appendStringInfo(strinfo, " %s %s ", pgcol->attname, entry->pgsqlTypeName);
+						appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, entry->pgsqlTypeName);
 
 					pgcol->atttype = pstrdup(entry->pgsqlTypeName);
 					if (entry->pgsqlTypeLength != -1)
@@ -1400,7 +1272,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 				if (datatypeonly)
 					appendStringInfo(strinfo, " %s ", entry->pgsqlTypeName);
 				else
-					appendStringInfo(strinfo, " %s %s ", pgcol->attname, entry->pgsqlTypeName);
+					appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, entry->pgsqlTypeName);
 
 				pgcol->atttype = pstrdup(entry->pgsqlTypeName);
 				if (entry->pgsqlTypeLength != -1)
@@ -1464,7 +1336,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 					if (datatypeonly)
 						appendStringInfo(strinfo, " %s ", col->typeName);
 					else
-						appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
+						appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, col->typeName);
 
 					pgcol->atttype = pstrdup(col->typeName);
 				}
@@ -1477,7 +1349,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 					if (datatypeonly)
 						appendStringInfo(strinfo, " %s ", entry->pgsqlTypeName);
 					else
-						appendStringInfo(strinfo, " %s %s ", pgcol->attname, entry->pgsqlTypeName);
+						appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, entry->pgsqlTypeName);
 
 					pgcol->atttype = pstrdup(entry->pgsqlTypeName);
 					if (entry->pgsqlTypeLength != -1)
@@ -1494,7 +1366,7 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 				if (datatypeonly)
 					appendStringInfo(strinfo, " %s ", entry->pgsqlTypeName);
 				else
-					appendStringInfo(strinfo, " %s %s ", pgcol->attname, entry->pgsqlTypeName);
+					appendStringInfo(strinfo, " \"%s\" %s ", pgcol->attname, entry->pgsqlTypeName);
 
 				pgcol->atttype = pstrdup(entry->pgsqlTypeName);
 				if (entry->pgsqlTypeLength != -1)
@@ -2645,47 +2517,58 @@ handle_data_by_type_category(char * in, DBZ_DML_COLUMN_VALUE * colval, Connector
 		case TYPCATEGORY_STRING:
 		default:
 		{
-			/* Check if this is a bytea column being processed as string category */
+			/* Check if this is bytea type and handle Base64 conversion */
 			if (colval->typname && !strcasecmp(colval->typname, "bytea"))
 			{
-				elog(WARNING, "BYTEA in STRING CATEGORY: col %s dbztype %d input='%s'", colval->name, colval->dbztype, in ? in : "NULL");
-				/* Handle binary data conversion for bytea type */
+				elog(WARNING, "BYTEA handling: col %s input='%s'", colval->name, in ? in : "NULL");
 				if (in && strlen(in) > 0)
 				{
-					/* Check if it's already hex format with \x prefix */
-					if (strncmp(in, "\\x", 2) == 0)
-					{
-						out = addquote ? escapeSingleQuote(in, addquote) : pstrdup(in);
+					bool looks_like_base64 = (strpbrk(in, "+/=") != NULL) && 
+						(strlen(in) % 4 == 0 || strchr(in, '=') != NULL);
+					if (looks_like_base64) {
+						/* Base64 decode and convert to \x hex */
+						int input_len = strlen(in);
+						int max_decoded_len = (input_len * 3) / 4 + 1;
+						unsigned char *decoded_bytes = palloc(max_decoded_len);
+						int actual_decoded_len = pg_b64_decode(in, input_len, (char*)decoded_bytes, max_decoded_len);
+						if (actual_decoded_len >= 0) {
+							/* Convert to \x hex format */
+							char *hex_result = palloc(actual_decoded_len * 2 + 3);
+							strcpy(hex_result, "\\x");
+							for (int i = 0; i < actual_decoded_len; i++) {
+								sprintf(hex_result + 2 + (i * 2), "%02x", decoded_bytes[i]);
+							}
+							pfree(decoded_bytes);
+							out = hex_result;
+							elog(WARNING, "BYTEA: Base64 decoded to hex: '%s'", out);
+						} else {
+							pfree(decoded_bytes);
+							out = pstrdup(in);
+							elog(WARNING, "BYTEA: Base64 decode failed");
+						}
+					} else {
+						/* Handle as hex string */
+						if (strncmp(in, "\\x", 2) == 0) {
+							out = pstrdup(in);
+						} else if (strncmp(in, "0x", 2) == 0) {
+							char *hex_result = palloc(strlen(in) + 1);
+							strcpy(hex_result, "\\x");
+							strcat(hex_result, in + 2);
+							out = hex_result;
+						} else {
+							/* Plain hex string */
+							char *hex_result = palloc(strlen(in) + 3);
+							strcpy(hex_result, "\\x");
+							strcat(hex_result, in);
+							out = hex_result;
+						}
+						elog(WARNING, "BYTEA: Converted to hex: '%s'", out);
 					}
-					else if (strncmp(in, "0x", 2) == 0)
-					{
-						/* MySQL hex format starting with 0x, convert to \x */
-						StringInfoData hexdata;
-						initStringInfo(&hexdata);
-						appendStringInfo(&hexdata, "\\x%s", in + 2);
-						out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
-						elog(WARNING, "STRING CATEGORY: Converted MySQL hex from '%s' to '%s'", in, hexdata.data);
-						pfree(hexdata.data);
-					}
-					else
-					{
-						/* Assume plain hex string, add \x prefix */
-						StringInfoData hexdata;
-						initStringInfo(&hexdata);
-						appendStringInfo(&hexdata, "\\x%s", in);
-						out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
-						elog(WARNING, "STRING CATEGORY: Converted plain hex from '%s' to '%s'", in, hexdata.data);
-						pfree(hexdata.data);
-					}
-				}
-				else
-				{
-					out = NULL;
 				}
 			}
 			else
 			{
-				/* todo */
+				/* Regular string processing */
 				elog(DEBUG1, "no special handling for category %c", colval->typcategory);
 				if (addquote)
 				{
@@ -2972,207 +2855,137 @@ processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote, char * remoteObj
 			}
 			break;
 		}
-		case BYTEAOID:
+	case BYTEAOID:
+	{
+		elog(WARNING, "BYTEAOID MAIN: col %s dbztype %d input='%s'", colval->name, colval->dbztype, in ? in : "NULL");
+		switch (colval->dbztype)
 		{
-			elog(WARNING, "BYTEAOID PROCESSING: col %s dbztype %d input='%s'", colval->name, colval->dbztype, in ? in : "NULL");
-			switch (colval->dbztype)
+			case DBZTYPE_STRUCT:
 			{
-				case DBZTYPE_STRUCT:
-				{
-					expand_struct_value(in, colval, type);
-					/* Try original function, fallback to custom handling */
-					out = handle_base64_to_byte(colval->value, addquote);
-					if (!out)
-					{
-						elog(WARNING, "handle_base64_to_byte failed, using custom bytea handling");
-						if (colval->value && strlen(colval->value) > 0)
-						{
-							StringInfoData hexdata;
-							initStringInfo(&hexdata);
-							appendStringInfo(&hexdata, "\\x%s", colval->value);
-							out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
-							pfree(hexdata.data);
-						}
-					}
-					break;
-				}
-				case DBZTYPE_BYTES:
-				{
-					elog(WARNING, "BYTEAOID DBZTYPE_BYTES: input='%s'", in ? in : "NULL");
-					/* Try original function first */
-					out = handle_base64_to_byte(in, addquote);
-					elog(WARNING, "handle_base64_to_byte returned: '%s'", out ? out : "NULL");
-					
-					/* Always use custom Base64 decoding for better control */
-					if (in && strlen(in) > 0)
-					{
-						/* This is Base64 encoded data, need to decode it properly */
-						int input_len = strlen(in);
-						int max_decoded_len = (input_len * 3) / 4 + 1; /* Conservative estimate */
-						unsigned char *decoded_bytes;
-						int actual_decoded_len;
-						int i;
-						StringInfoData hex_result;
-						
-						/* Allocate buffer for decoded bytes */
-						decoded_bytes = palloc(max_decoded_len);
-						
-						/* Decode Base64 to raw bytes */
-						actual_decoded_len = pg_b64_decode(in, input_len, (char*)decoded_bytes, max_decoded_len);
-						if (actual_decoded_len >= 0)
-						{
-							/* Convert raw bytes to hex string with \x prefix */
-							initStringInfo(&hex_result);
-							appendStringInfo(&hex_result, "\\x");
-							
-							for (i = 0; i < actual_decoded_len; i++)
-							{
-								appendStringInfo(&hex_result, "%02x", decoded_bytes[i]);
+				expand_struct_value(in, colval, type);
+				/* Try original handler first */
+				out = handle_base64_to_byte(colval->value, addquote);
+				elog(WARNING, "handle_base64_to_byte (STRUCT) returned: '%s'", out ? out : "NULL");
+				
+				/* If original failed or input looks like Base64, use our conversion */
+				if (colval->value && strlen(colval->value) > 0) {
+					bool looks_like_base64 = (strpbrk(colval->value, "+/=") != NULL) && 
+						(strlen(colval->value) % 4 == 0 || strchr(colval->value, '=') != NULL);
+					if (looks_like_base64) {
+						int input_len = strlen(colval->value);
+						int max_decoded_len = (input_len * 3) / 4 + 1;
+						unsigned char *decoded_bytes = palloc(max_decoded_len);
+						int actual_decoded_len = pg_b64_decode(colval->value, input_len, (char*)decoded_bytes, max_decoded_len);
+						if (actual_decoded_len >= 0) {
+							char *hex_result = palloc(actual_decoded_len * 2 + 3);
+							strcpy(hex_result, "\\x");
+							for (int i = 0; i < actual_decoded_len; i++) {
+								sprintf(hex_result + 2 + (i * 2), "%02x", decoded_bytes[i]);
 							}
-							
-							/* Clean up and return result */
 							pfree(decoded_bytes);
-							if (out) pfree(out); /* Free the original result */
-							out = addquote ? escapeSingleQuote(hex_result.data, addquote) : pstrdup(hex_result.data);
-							elog(WARNING, "Base64 decoded: '%s' -> '%s'", in, hex_result.data);
-							pfree(hex_result.data);
-						}
-						else
-						{
-							elog(WARNING, "Base64 decode failed for: '%s'", in);
+							if (out) pfree(out);
+							out = hex_result;
+							elog(WARNING, "BYTEAOID STRUCT: Base64 decoded to hex: '%s'", out);
+						} else {
 							pfree(decoded_bytes);
-							if (!out)
-							{
-								/* Fallback: assume it's already hex */
-								if (strncmp(in, "\\x", 2) == 0)
-								{
-									out = addquote ? escapeSingleQuote(in, addquote) : pstrdup(in);
-								}
-								else
-								{
-									StringInfoData fallback_hex;
-									initStringInfo(&fallback_hex);
-									appendStringInfo(&fallback_hex, "\\x%s", in);
-									out = addquote ? escapeSingleQuote(fallback_hex.data, addquote) : pstrdup(fallback_hex.data);
-									pfree(fallback_hex.data);
-								}
-							}
 						}
 					}
-					break;
 				}
-				case DBZTYPE_STRING:
-#ifdef WITH_OLR
-				case OLRTYPE_STRING:
-#endif
-				{
-					elog(WARNING, "BYTEAOID DBZTYPE_STRING: input='%s'", in ? in : "NULL");
-					/* Try original function first */
-					out = handle_string_to_byte(in, addquote);
-					elog(WARNING, "handle_string_to_byte returned: '%s'", out ? out : "NULL");
-					
-					if (in && strlen(in) > 0)
-					{
-						/* Check if it looks like Base64 (contains + / = and is reasonable length) */
-						bool looks_like_base64 = (strpbrk(in, "+/=") != NULL) && (strlen(in) % 4 == 0 || strchr(in, '=') != NULL);
-						
-						if (looks_like_base64)
-						{
-							/* Try Base64 decoding */
-							int input_len = strlen(in);
-							int max_decoded_len = (input_len * 3) / 4 + 1; /* Conservative estimate */
-							unsigned char *decoded_bytes;
-							int actual_decoded_len;
-							StringInfoData hex_result;
-							int i;
-							
-							elog(WARNING, "String looks like Base64, attempting decode: '%s'", in);
-							
-							/* Allocate buffer for decoded bytes */
-							decoded_bytes = palloc(max_decoded_len);
-							
-							/* Decode Base64 to raw bytes */
-							actual_decoded_len = pg_b64_decode(in, input_len, (char*)decoded_bytes, max_decoded_len);
-							if (actual_decoded_len >= 0)
-							{
-								/* Convert raw bytes to hex string with \x prefix */
-								initStringInfo(&hex_result);
-								appendStringInfo(&hex_result, "\\x");
-								
-								for (i = 0; i < actual_decoded_len; i++)
-								{
-									appendStringInfo(&hex_result, "%02x", decoded_bytes[i]);
-								}
-								
-								/* Clean up and return result */
-								pfree(decoded_bytes);
-								if (out) pfree(out); /* Free the original result */
-								out = addquote ? escapeSingleQuote(hex_result.data, addquote) : pstrdup(hex_result.data);
-								elog(WARNING, "Base64 string decoded: '%s' -> '%s'", in, hex_result.data);
-								pfree(hex_result.data);
-							}
-							else
-							{
-								elog(WARNING, "Base64 decode failed, falling back to hex handling");
-								pfree(decoded_bytes);
-								/* Continue with hex handling below */
-							}
-						}
-						
-						/* If not Base64 or Base64 decode failed, handle as hex */
-						if (!out || (!looks_like_base64 && !out))
-						{
-							if (strncmp(in, "\\x", 2) == 0)
-							{
-								if (out) pfree(out);
-								out = addquote ? escapeSingleQuote(in, addquote) : pstrdup(in);
-							}
-							else if (strncmp(in, "0x", 2) == 0)
-							{
-								StringInfoData hexdata;
-								initStringInfo(&hexdata);
-								appendStringInfo(&hexdata, "\\x%s", in + 2);
-								if (out) pfree(out);
-								out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
-								elog(WARNING, "MySQL hex conversion: '%s' -> '%s'", in, hexdata.data);
-								pfree(hexdata.data);
-							}
-							else if (!out)
-							{
-								/* Assume plain hex string, add \x prefix */
-								StringInfoData hexdata;
-								initStringInfo(&hexdata);
-								appendStringInfo(&hexdata, "\\x%s", in);
-								out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
-								elog(WARNING, "Plain hex conversion: '%s' -> '%s'", in, hexdata.data);
-								pfree(hexdata.data);
-							}
-						}
-					}
-					break;
-				}
-				default:
-				{
-					elog(WARNING, "BYTEAOID default case: dbztype %d input='%s'", colval->dbztype, in ? in : "NULL");
-					/* Try original function, fallback to custom handling */
-					out = handle_numeric_to_byte(in, addquote);
-					if (!out)
-					{
-						elog(WARNING, "handle_numeric_to_byte failed, using custom bytea handling");
-						if (in && strlen(in) > 0)
-						{
-							StringInfoData hexdata;
-							initStringInfo(&hexdata);
-							appendStringInfo(&hexdata, "\\x%s", in);
-							out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
-							pfree(hexdata.data);
-						}
-					}
-					break;
-				}
+				break;
 			}
-			break;
+			case DBZTYPE_BYTES:
+			{
+				/* Try original handler first */
+				out = handle_base64_to_byte(in, addquote);
+				elog(WARNING, "handle_base64_to_byte (BYTES) returned: '%s'", out ? out : "NULL");
+				
+				/* Always try our Base64 conversion for DBZTYPE_BYTES */
+				if (in && strlen(in) > 0) {
+					int input_len = strlen(in);
+					int max_decoded_len = (input_len * 3) / 4 + 1;
+					unsigned char *decoded_bytes = palloc(max_decoded_len);
+					int actual_decoded_len = pg_b64_decode(in, input_len, (char*)decoded_bytes, max_decoded_len);
+					if (actual_decoded_len >= 0) {
+						char *hex_result = palloc(actual_decoded_len * 2 + 3);
+						strcpy(hex_result, "\\x");
+						for (int i = 0; i < actual_decoded_len; i++) {
+							sprintf(hex_result + 2 + (i * 2), "%02x", decoded_bytes[i]);
+						}
+						pfree(decoded_bytes);
+						if (out) pfree(out);
+						out = hex_result;
+						elog(WARNING, "BYTEAOID BYTES: Base64 decoded to hex: '%s'", out);
+					} else {
+						pfree(decoded_bytes);
+						elog(WARNING, "BYTEAOID BYTES: Base64 decode failed");
+					}
+				}
+				break;
+			}
+			case DBZTYPE_STRING:
+#ifdef WITH_OLR
+			case OLRTYPE_STRING:
+#endif
+			{
+				/* Try original handler first */
+				out = handle_string_to_byte(in, addquote);
+				elog(WARNING, "handle_string_to_byte returned: '%s'", out ? out : "NULL");
+				
+				/* Check if it looks like Base64 and try our conversion */
+				if (in && strlen(in) > 0) {
+					bool looks_like_base64 = (strpbrk(in, "+/=") != NULL) && 
+						(strlen(in) % 4 == 0 || strchr(in, '=') != NULL);
+					if (looks_like_base64) {
+						int input_len = strlen(in);
+						int max_decoded_len = (input_len * 3) / 4 + 1;
+						unsigned char *decoded_bytes = palloc(max_decoded_len);
+						int actual_decoded_len = pg_b64_decode(in, input_len, (char*)decoded_bytes, max_decoded_len);
+						if (actual_decoded_len >= 0) {
+							char *hex_result = palloc(actual_decoded_len * 2 + 3);
+							strcpy(hex_result, "\\x");
+							for (int i = 0; i < actual_decoded_len; i++) {
+								sprintf(hex_result + 2 + (i * 2), "%02x", decoded_bytes[i]);
+							}
+							pfree(decoded_bytes);
+							if (out) pfree(out);
+							out = hex_result;
+							elog(WARNING, "BYTEAOID STRING: Base64 decoded to hex: '%s'", out);
+						} else {
+							pfree(decoded_bytes);
+						}
+					} else {
+						/* Handle as hex string if not Base64 */
+						if (strncmp(in, "\\x", 2) == 0) {
+							if (out) pfree(out);
+							out = pstrdup(in);
+						} else if (strncmp(in, "0x", 2) == 0) {
+							char *hex_result = palloc(strlen(in) + 1);
+							strcpy(hex_result, "\\x");
+							strcat(hex_result, in + 2);
+							if (out) pfree(out);
+							out = hex_result;
+						} else {
+							/* Plain hex string */
+							char *hex_result = palloc(strlen(in) + 3);
+							strcpy(hex_result, "\\x");
+							strcat(hex_result, in);
+							if (out) pfree(out);
+							out = hex_result;
+						}
+						elog(WARNING, "BYTEAOID STRING: Converted to hex: '%s'", out);
+					}
+				}
+				break;
+			}
+			default:
+			{
+				out = handle_numeric_to_byte(in, addquote);
+				elog(WARNING, "handle_numeric_to_byte returned: '%s'", out ? out : "NULL");
+				break;
+			}
 		}
+		break;
+	}
 		case INTERVALOID:
 		{
 			switch (colval->dbztype)
@@ -4593,26 +4406,23 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-		if (schema && table)
-		{
+			if (schema && table)
+			{
 			/* include create schema clause */
-			const char *quoted_schema = quote_identifier(schema);
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; ", quoted_schema);
+			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS \"%s\"; ", schema);
 
 			/* table stays as table under the schema */
-			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s.%s (", quoted_schema, quoted_table);
-			pgddl->schema = pstrdup(schema);
-			pgddl->tbname = pstrdup(table);
-		}
-		else if (!schema && table)
-		{
+			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS \"%s\".\"%s\" (", schema, table);
+				pgddl->schema = pstrdup(schema);
+				pgddl->tbname = pstrdup(table);
+			}
+			else if (!schema && table)
+			{
 			/* table stays as table but no schema */
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s (", quoted_table);
-			pgddl->schema = pstrdup("public");
-			pgddl->tbname = pstrdup(table);
-		}
+			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS \"%s\" (", table);
+				pgddl->schema = pstrdup("public");
+				pgddl->tbname = pstrdup(table);
+			}
 		}
 		else
 		{
@@ -4645,16 +4455,10 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 			}
 
 		/* database mapped to schema */
-		{
-			const char *quoted_db = quote_identifier(db);
-			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; ", quoted_db);
-		}
+		appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS \"%s\"; ", db);
 
 		/* table stays as table, schema ignored */
-		{
-				const char *quoted_db = quote_identifier(db);
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s.%s (", quoted_db, quoted_table);
+		appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS \"%s\".\"%s\" (", db, table);
 			pgddl->schema = pstrdup(db);
 			pgddl->tbname = pstrdup(table);
 		}
@@ -4687,7 +4491,7 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 			/* if there is UNSIGNED operator found in col->typeName, add CHECK constraint */
 			if (strstr(col->typeName, "unsigned"))
 			{
-				appendStringInfo(&strinfo, "CHECK (%s >= 0) ", col->name);
+				appendStringInfo(&strinfo, "CHECK (\"%s\" >= 0) ", col->name);
 			}
 
 			/* is it optional? */
@@ -4755,24 +4559,21 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-		if (schema && table)
-		{
-			/* table stays as table under the schema */
-			const char *quoted_schema = quote_identifier(schema);
-			const char *quoted_table = quote_identifier(table);
-			appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s.%s;", quoted_schema, quoted_table);
-			pgddl->schema = pstrdup(schema);
-			pgddl->tbname = pstrdup(table);
-		}
-		else if (!schema && table)
-		{
-			/* table stays as table but no schema */
-			const char *quoted_table = quote_identifier(table);
-			schema = pstrdup("public");
-			appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s;", quoted_table);
-			pgddl->schema = pstrdup("public");
-			pgddl->tbname = pstrdup(table);
-		}
+			if (schema && table)
+			{
+				/* table stays as table under the schema */
+				appendStringInfo(&strinfo, "DROP TABLE IF EXISTS \"%s\".\"%s\";", schema, table);
+				pgddl->schema = pstrdup(schema);
+				pgddl->tbname = pstrdup(table);
+			}
+			else if (!schema && table)
+			{
+				/* table stays as table but no schema */
+				schema = pstrdup("public");
+				appendStringInfo(&strinfo, "DROP TABLE IF EXISTS \"%s\";", table);
+				pgddl->schema = pstrdup("public");
+				pgddl->tbname = pstrdup(table);
+			}
 		}
 		else
 		{
@@ -5019,7 +4820,7 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 						/* if there is UNSIGNED operator found in col->typeName, add CHECK constraint */
 						if (strstr(col->typeName, "unsigned"))
 						{
-							appendStringInfo(&strinfo, "CHECK (%s >= 0) ", pgcol->attname);
+							appendStringInfo(&strinfo, "CHECK (\"%s\" >= 0) ", pgcol->attname);
 						}
 
 						/* is it optional? */
@@ -5153,7 +4954,7 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 
 						pgcol = (PG_DDL_COLUMN *) palloc0(sizeof(PG_DDL_COLUMN));
 						altered = true;
-						appendStringInfo(&strinfo, "DROP COLUMN IF EXISTS %s,", NameStr(attr->attname));
+						appendStringInfo(&strinfo, "DROP COLUMN IF EXISTS \"%s\",", NameStr(attr->attname));
 						pgcol->attname = pstrdup(NameStr(attr->attname));
 						pgcol->position = attnum;
 						pgddl->columns = lappend(pgddl->columns, pgcol);
@@ -5270,7 +5071,7 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 					/* if there is UNSIGNED operator found in col->typeName, add CHECK constraint */
 					if (strstr(col->typeName, "unsigned"))
 					{
-						appendStringInfo(&strinfo, "CHECK (%s >= 0) ", pgcol->attname);
+						appendStringInfo(&strinfo, "CHECK (\"%s\" >= 0) ", pgcol->attname);
 					}
 
 					/* is it optional? */
