@@ -2645,15 +2645,56 @@ handle_data_by_type_category(char * in, DBZ_DML_COLUMN_VALUE * colval, Connector
 		case TYPCATEGORY_STRING:
 		default:
 		{
-			/* todo */
-			elog(DEBUG1, "no special handling for category %c", colval->typcategory);
-			if (addquote)
+			/* Check if this is a bytea column being processed as string category */
+			if (colval->typname && !strcasecmp(colval->typname, "bytea"))
 			{
-				out = escapeSingleQuote(in, addquote);
+				elog(WARNING, "BYTEA in STRING CATEGORY: col %s dbztype %d input='%s'", colval->name, colval->dbztype, in ? in : "NULL");
+				/* Handle binary data conversion for bytea type */
+				if (in && strlen(in) > 0)
+				{
+					/* Check if it's already hex format with \x prefix */
+					if (strncmp(in, "\\x", 2) == 0)
+					{
+						out = addquote ? escapeSingleQuote(in, addquote) : pstrdup(in);
+					}
+					else if (strncmp(in, "0x", 2) == 0)
+					{
+						/* MySQL hex format starting with 0x, convert to \x */
+						StringInfoData hexdata;
+						initStringInfo(&hexdata);
+						appendStringInfo(&hexdata, "\\x%s", in + 2);
+						out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+						elog(WARNING, "STRING CATEGORY: Converted MySQL hex from '%s' to '%s'", in, hexdata.data);
+						pfree(hexdata.data);
+					}
+					else
+					{
+						/* Assume plain hex string, add \x prefix */
+						StringInfoData hexdata;
+						initStringInfo(&hexdata);
+						appendStringInfo(&hexdata, "\\x%s", in);
+						out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+						elog(WARNING, "STRING CATEGORY: Converted plain hex from '%s' to '%s'", in, hexdata.data);
+						pfree(hexdata.data);
+					}
+				}
+				else
+				{
+					out = NULL;
+				}
 			}
 			else
 			{
-				out = pstrdup(in);
+				/* todo */
+				elog(DEBUG1, "no special handling for category %c", colval->typcategory);
+				if (addquote)
+				{
+					out = escapeSingleQuote(in, addquote);
+				}
+				else
+				{
+					out = pstrdup(in);
+				}
 			}
 			break;
 		}
@@ -2720,8 +2761,9 @@ processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote, char * remoteObj
 	if (!strcasecmp(in, "NULL"))
 		return NULL;
 
-	elog(DEBUG1, "%s: col %s typoid %d timerep %d dbztype %d category %c",__FUNCTION__,
-			colval->name, colval->datatype, colval->timerep, colval->dbztype, colval->typcategory);
+	elog(WARNING, "%s: col %s typoid %d timerep %d dbztype %d category %c typname %s input='%s'",__FUNCTION__,
+			colval->name, colval->datatype, colval->timerep, colval->dbztype, colval->typcategory, 
+			colval->typname ? colval->typname : "NULL", in ? in : "NULL");
 	switch(colval->datatype)
 	{
 		case BOOLOID:
@@ -2932,17 +2974,91 @@ processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote, char * remoteObj
 		}
 		case BYTEAOID:
 		{
+			elog(WARNING, "BYTEAOID PROCESSING: col %s dbztype %d input='%s'", colval->name, colval->dbztype, in ? in : "NULL");
 			switch (colval->dbztype)
 			{
 				case DBZTYPE_STRUCT:
 				{
 					expand_struct_value(in, colval, type);
+					/* Try original function, fallback to custom handling */
 					out = handle_base64_to_byte(colval->value, addquote);
+					if (!out)
+					{
+						elog(WARNING, "handle_base64_to_byte failed, using custom bytea handling");
+						if (colval->value && strlen(colval->value) > 0)
+						{
+							StringInfoData hexdata;
+							initStringInfo(&hexdata);
+							appendStringInfo(&hexdata, "\\x%s", colval->value);
+							out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+							pfree(hexdata.data);
+						}
+					}
 					break;
 				}
 				case DBZTYPE_BYTES:
 				{
+					elog(WARNING, "BYTEAOID DBZTYPE_BYTES: input='%s'", in ? in : "NULL");
+					/* Try original function first */
 					out = handle_base64_to_byte(in, addquote);
+					elog(WARNING, "handle_base64_to_byte returned: '%s'", out ? out : "NULL");
+					
+					/* Always use custom Base64 decoding for better control */
+					if (in && strlen(in) > 0)
+					{
+						/* This is Base64 encoded data, need to decode it properly */
+						int input_len = strlen(in);
+						int max_decoded_len = (input_len * 3) / 4 + 1; /* Conservative estimate */
+						unsigned char *decoded_bytes;
+						int actual_decoded_len;
+						int i;
+						StringInfoData hex_result;
+						
+						/* Allocate buffer for decoded bytes */
+						decoded_bytes = palloc(max_decoded_len);
+						
+						/* Decode Base64 to raw bytes */
+						actual_decoded_len = pg_b64_decode(in, input_len, (char*)decoded_bytes, max_decoded_len);
+						if (actual_decoded_len >= 0)
+						{
+							/* Convert raw bytes to hex string with \x prefix */
+							initStringInfo(&hex_result);
+							appendStringInfo(&hex_result, "\\x");
+							
+							for (i = 0; i < actual_decoded_len; i++)
+							{
+								appendStringInfo(&hex_result, "%02x", decoded_bytes[i]);
+							}
+							
+							/* Clean up and return result */
+							pfree(decoded_bytes);
+							if (out) pfree(out); /* Free the original result */
+							out = addquote ? escapeSingleQuote(hex_result.data, addquote) : pstrdup(hex_result.data);
+							elog(WARNING, "Base64 decoded: '%s' -> '%s'", in, hex_result.data);
+							pfree(hex_result.data);
+						}
+						else
+						{
+							elog(WARNING, "Base64 decode failed for: '%s'", in);
+							pfree(decoded_bytes);
+							if (!out)
+							{
+								/* Fallback: assume it's already hex */
+								if (strncmp(in, "\\x", 2) == 0)
+								{
+									out = addquote ? escapeSingleQuote(in, addquote) : pstrdup(in);
+								}
+								else
+								{
+									StringInfoData fallback_hex;
+									initStringInfo(&fallback_hex);
+									appendStringInfo(&fallback_hex, "\\x%s", in);
+									out = addquote ? escapeSingleQuote(fallback_hex.data, addquote) : pstrdup(fallback_hex.data);
+									pfree(fallback_hex.data);
+								}
+							}
+						}
+					}
 					break;
 				}
 				case DBZTYPE_STRING:
@@ -2950,12 +3066,108 @@ processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote, char * remoteObj
 				case OLRTYPE_STRING:
 #endif
 				{
+					elog(WARNING, "BYTEAOID DBZTYPE_STRING: input='%s'", in ? in : "NULL");
+					/* Try original function first */
 					out = handle_string_to_byte(in, addquote);
+					elog(WARNING, "handle_string_to_byte returned: '%s'", out ? out : "NULL");
+					
+					if (in && strlen(in) > 0)
+					{
+						/* Check if it looks like Base64 (contains + / = and is reasonable length) */
+						bool looks_like_base64 = (strpbrk(in, "+/=") != NULL) && (strlen(in) % 4 == 0 || strchr(in, '=') != NULL);
+						
+						if (looks_like_base64)
+						{
+							/* Try Base64 decoding */
+							int input_len = strlen(in);
+							int max_decoded_len = (input_len * 3) / 4 + 1; /* Conservative estimate */
+							unsigned char *decoded_bytes;
+							int actual_decoded_len;
+							StringInfoData hex_result;
+							int i;
+							
+							elog(WARNING, "String looks like Base64, attempting decode: '%s'", in);
+							
+							/* Allocate buffer for decoded bytes */
+							decoded_bytes = palloc(max_decoded_len);
+							
+							/* Decode Base64 to raw bytes */
+							actual_decoded_len = pg_b64_decode(in, input_len, (char*)decoded_bytes, max_decoded_len);
+							if (actual_decoded_len >= 0)
+							{
+								/* Convert raw bytes to hex string with \x prefix */
+								initStringInfo(&hex_result);
+								appendStringInfo(&hex_result, "\\x");
+								
+								for (i = 0; i < actual_decoded_len; i++)
+								{
+									appendStringInfo(&hex_result, "%02x", decoded_bytes[i]);
+								}
+								
+								/* Clean up and return result */
+								pfree(decoded_bytes);
+								if (out) pfree(out); /* Free the original result */
+								out = addquote ? escapeSingleQuote(hex_result.data, addquote) : pstrdup(hex_result.data);
+								elog(WARNING, "Base64 string decoded: '%s' -> '%s'", in, hex_result.data);
+								pfree(hex_result.data);
+							}
+							else
+							{
+								elog(WARNING, "Base64 decode failed, falling back to hex handling");
+								pfree(decoded_bytes);
+								/* Continue with hex handling below */
+							}
+						}
+						
+						/* If not Base64 or Base64 decode failed, handle as hex */
+						if (!out || (!looks_like_base64 && !out))
+						{
+							if (strncmp(in, "\\x", 2) == 0)
+							{
+								if (out) pfree(out);
+								out = addquote ? escapeSingleQuote(in, addquote) : pstrdup(in);
+							}
+							else if (strncmp(in, "0x", 2) == 0)
+							{
+								StringInfoData hexdata;
+								initStringInfo(&hexdata);
+								appendStringInfo(&hexdata, "\\x%s", in + 2);
+								if (out) pfree(out);
+								out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+								elog(WARNING, "MySQL hex conversion: '%s' -> '%s'", in, hexdata.data);
+								pfree(hexdata.data);
+							}
+							else if (!out)
+							{
+								/* Assume plain hex string, add \x prefix */
+								StringInfoData hexdata;
+								initStringInfo(&hexdata);
+								appendStringInfo(&hexdata, "\\x%s", in);
+								out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+								elog(WARNING, "Plain hex conversion: '%s' -> '%s'", in, hexdata.data);
+								pfree(hexdata.data);
+							}
+						}
+					}
 					break;
 				}
 				default:
 				{
+					elog(WARNING, "BYTEAOID default case: dbztype %d input='%s'", colval->dbztype, in ? in : "NULL");
+					/* Try original function, fallback to custom handling */
 					out = handle_numeric_to_byte(in, addquote);
+					if (!out)
+					{
+						elog(WARNING, "handle_numeric_to_byte failed, using custom bytea handling");
+						if (in && strlen(in) > 0)
+						{
+							StringInfoData hexdata;
+							initStringInfo(&hexdata);
+							appendStringInfo(&hexdata, "\\x%s", in);
+							out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+							pfree(hexdata.data);
+						}
+					}
 					break;
 				}
 			}
@@ -3003,10 +3215,93 @@ processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote, char * remoteObj
 		default:
 		{
 			/*
-			 * if this column data type does not fall in the cases above, then we will try
-			 * to process it based on its type category.
+			 * Special handling for bytea type before falling back to type category
 			 */
-			out = handle_data_by_type_category(in, colval, type, addquote);
+			if (colval->typname && !strcasecmp(colval->typname, "bytea"))
+			{
+				/* Handle binary data conversion for bytea type */
+				switch (colval->dbztype)
+				{
+					case DBZTYPE_BYTES:
+					{
+						/* Base64 encoded binary data - decode it */
+						elog(DEBUG1, "Processing bytea column %s with base64 data", colval->name);
+						/* For now, assume it's already in correct format, but add hex prefix if needed */
+						if (in && strlen(in) > 0)
+						{
+							/* Check if it's already hex format with \x prefix */
+							if (strncmp(in, "\\x", 2) == 0)
+							{
+								out = addquote ? escapeSingleQuote(in, addquote) : pstrdup(in);
+							}
+							else
+							{
+								/* Assume it's hex without prefix, add \x */
+								StringInfoData hexdata;
+								initStringInfo(&hexdata);
+								appendStringInfo(&hexdata, "\\x%s", in);
+								out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+								pfree(hexdata.data);
+							}
+						}
+						else
+						{
+							out = NULL;
+						}
+						break;
+					}
+					case DBZTYPE_STRING:
+					{
+						/* String representation of binary data */
+						elog(DEBUG1, "Processing bytea column %s with string data", colval->name);
+						if (in && strlen(in) > 0)
+						{
+							/* Check if it's already hex format with \x prefix */
+							if (strncmp(in, "\\x", 2) == 0)
+							{
+								out = addquote ? escapeSingleQuote(in, addquote) : pstrdup(in);
+							}
+							else if (strncmp(in, "0x", 2) == 0)
+							{
+								/* MySQL hex format starting with 0x, convert to \x */
+								StringInfoData hexdata;
+								initStringInfo(&hexdata);
+								appendStringInfo(&hexdata, "\\x%s", in + 2);
+								out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+								pfree(hexdata.data);
+							}
+							else
+							{
+								/* Assume plain hex string, add \x prefix */
+								StringInfoData hexdata;
+								initStringInfo(&hexdata);
+								appendStringInfo(&hexdata, "\\x%s", in);
+								out = addquote ? escapeSingleQuote(hexdata.data, addquote) : pstrdup(hexdata.data);
+								pfree(hexdata.data);
+							}
+						}
+						else
+						{
+							out = NULL;
+						}
+						break;
+					}
+					default:
+					{
+						/* Fall back to standard type category handling */
+						out = handle_data_by_type_category(in, colval, type, addquote);
+						break;
+					}
+				}
+			}
+			else
+			{
+				/*
+				 * if this column data type does not fall in the cases above, then we will try
+				 * to process it based on its type category.
+				 */
+				out = handle_data_by_type_category(in, colval, type, addquote);
+			}
 			break;
 		}
 	}
