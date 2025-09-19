@@ -286,3 +286,9 @@ select synchdb_stop_engine_bgw('sqlserverconn');
 select synchdb_stop_engine_bgw('oracleconn');
 select synchdb_stop_engine_bgw('olrconn');
 ```
+
+### Build image
+``` bash
+// at root folder
+docker build -t <name>:<tag> .
+```
