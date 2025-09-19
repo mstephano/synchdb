@@ -326,6 +326,7 @@ remove_precision(char * str, bool * removed) {
 	}
 }
 
+
 /*
  * count_active_columns
  *
@@ -861,17 +862,24 @@ alter_tbname(const char * from, const char * to)
 		if (table2 && schema2)
 		{
 			/* 'to' expressed as schema.table */
+			const char *quoted_schema2 = quote_identifier(schema2);
+			const char *quoted_from = quote_identifier(from);
+			const char *quoted_table2 = quote_identifier(table2);
+			const char *quoted_schema = quote_identifier(schema);
 			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; "
 					"ALTER TABLE %s RENAME TO %s; "
 					"ALTER TABLE %s.%s SET SCHEMA %s;",
-					schema2, from, table2, schema, table2, schema2);
+					quoted_schema2, quoted_from, quoted_table2, quoted_schema, quoted_table2, quoted_schema2);
 		}
 		else
 		{
 			/* 'to' expressed as table */
+			const char *quoted_from = quote_identifier(from);
+			const char *quoted_table2 = quote_identifier(table2);
+			const char *quoted_schema = quote_identifier(schema);
 			appendStringInfo(&strinfo, "ALTER TABLE %s RENAME TO %s;"
 					"ALTER TABLE %s.%s SET SCHEMA public;",
-					from, table2, schema, table2);
+					quoted_from, quoted_table2, quoted_schema, quoted_table2);
 		}
 	}
 	else
@@ -881,16 +889,21 @@ alter_tbname(const char * from, const char * to)
 		if (table2 && schema2)
 		{
 			/* 'to' expressed as schema.table */
+			const char *quoted_schema2 = quote_identifier(schema2);
+			const char *quoted_from = quote_identifier(from);
+			const char *quoted_table2 = quote_identifier(table2);
 			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; "
 					"ALTER TABLE %s RENAME TO %s; "
 					"ALTER TABLE %s SET SCHEMA %s;",
-					schema2, from, table2, table2, schema2);
+					quoted_schema2, quoted_from, quoted_table2, quoted_table2, quoted_schema2);
 		}
 		else
 		{
 			/* 'to' expressed as table */
+			const char *quoted_from = quote_identifier(from);
+			const char *quoted_table2 = quote_identifier(table2);
 			appendStringInfo(&strinfo, "ALTER TABLE %s RENAME TO %s;",
-					from, table2);
+					quoted_from, quoted_table2);
 		}
 	}
 
@@ -915,8 +928,13 @@ alter_attname(const char * tbname, const char * from, const char * to)
 		return ret;
 
 	initStringInfo(&strinfo);
-	appendStringInfo(&strinfo, "ALTER TABLE %s RENAME COLUMN %s TO %s;",
-			tbname, from, to);
+	{
+		const char *quoted_tbname = quote_identifier(tbname);
+		const char *quoted_from = quote_identifier(from);
+		const char *quoted_to = quote_identifier(to);
+		appendStringInfo(&strinfo, "ALTER TABLE %s RENAME COLUMN %s TO %s;",
+				quoted_tbname, quoted_from, quoted_to);
+	}
 
 	elog(WARNING, "renaming table ('%s')'s column from '%s' to '%s' with query: %s",
 			tbname, from, to, strinfo.data);
@@ -938,8 +956,12 @@ alter_atttype(const char * tbname, const char * from, const char * to, int types
 		return ret;
 
 	initStringInfo(&strinfo);
-	appendStringInfo(&strinfo, "ALTER TABLE %s ALTER COLUMN %s SET DATA TYPE %s",
-			tbname, from, to);
+	{
+		const char *quoted_tbname = quote_identifier(tbname);
+		const char *quoted_from = quote_identifier(from);
+		appendStringInfo(&strinfo, "ALTER TABLE %s ALTER COLUMN %s SET DATA TYPE %s",
+				quoted_tbname, quoted_from, to);
+	}
 
 	if (typesz > 0)
 	{
@@ -1015,29 +1037,99 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 				if (!strcasecmp(col->typeName, "bit") && col->length == 1)
 				{
 					/* special lookup case: BIT with length 1 */
+					char lowerTypeName[SYNCHDB_DATATYPE_NAME_SIZE];
+					int j;
 					key.autoIncremented = col->autoIncremented;
+					/* normalize type name to lowercase for consistent lookup */
+					for (j = 0; j < strlen(col->typeName) && j < sizeof(lowerTypeName) - 1; j++)
+						lowerTypeName[j] = (char) pg_tolower((unsigned char) col->typeName[j]);
+					lowerTypeName[j] = '\0';
 					snprintf(key.extTypeName, sizeof(key.extTypeName), "%s(%d)",
-							col->typeName, col->length);
+							lowerTypeName, col->length);
 				}
 				else
 				{
 					/* all other cases - no special handling */
+					char lowerTypeName[SYNCHDB_DATATYPE_NAME_SIZE];
+					int j;
 					key.autoIncremented = col->autoIncremented;
+					/* normalize type name to lowercase for consistent lookup */
+					for (j = 0; j < strlen(col->typeName) && j < sizeof(lowerTypeName) - 1; j++)
+						lowerTypeName[j] = (char) pg_tolower((unsigned char) col->typeName[j]);
+					lowerTypeName[j] = '\0';
 					snprintf(key.extTypeName, sizeof(key.extTypeName), "%s",
-							col->typeName);
+							lowerTypeName);
 				}
 				entry = (DatatypeHashEntry *) hash_search(mysqlDatatypeHash, &key, HASH_FIND, &found);
 				if (!found)
 				{
 					/* no mapping found, so no transformation done */
-					elog(DEBUG1, "no transformation done for %s (autoincrement %d)",
-							key.extTypeName, key.autoIncremented);
-					if (datatypeonly)
-						appendStringInfo(strinfo, " %s ", col->typeName);
+					elog(WARNING, "MYSQL TYPE MAPPING FAILED: original='%s' normalized='%s' autoincrement=%d - falling back to original type",
+							col->typeName, key.extTypeName, key.autoIncremented);
+					
+					/* Handle unsigned types even when mapping fails */
+					if (strstr(col->typeName, "unsigned"))
+					{
+						/* Convert common unsigned types manually as fallback */
+						if (!strcasecmp(col->typeName, "int unsigned") || !strcasecmp(col->typeName, "integer unsigned"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " bigint ");
+							else
+								appendStringInfo(strinfo, " %s bigint ", pgcol->attname);
+							pgcol->atttype = pstrdup("bigint");
+						}
+						else if (!strcasecmp(col->typeName, "tinyint unsigned"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " smallint ");
+							else
+								appendStringInfo(strinfo, " %s smallint ", pgcol->attname);
+							pgcol->atttype = pstrdup("smallint");
+						}
+						else if (!strcasecmp(col->typeName, "smallint unsigned"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " int ");
+							else
+								appendStringInfo(strinfo, " %s int ", pgcol->attname);
+							pgcol->atttype = pstrdup("int");
+						}
+						else if (!strcasecmp(col->typeName, "mediumint unsigned"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " int ");
+							else
+								appendStringInfo(strinfo, " %s int ", pgcol->attname);
+							pgcol->atttype = pstrdup("int");
+						}
+						else if (!strcasecmp(col->typeName, "bigint unsigned"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " numeric ");
+							else
+								appendStringInfo(strinfo, " %s numeric ", pgcol->attname);
+							pgcol->atttype = pstrdup("numeric");
+						}
+						else
+						{
+							/* Unknown unsigned type - fallback to original */
+							if (datatypeonly)
+								appendStringInfo(strinfo, " %s ", col->typeName);
+							else
+								appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
+							pgcol->atttype = pstrdup(col->typeName);
+						}
+					}
 					else
-						appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
-
-					pgcol->atttype = pstrdup(col->typeName);
+					{
+						/* Non-unsigned type - use original */
+						if (datatypeonly)
+							appendStringInfo(strinfo, " %s ", col->typeName);
+						else
+							appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
+						pgcol->atttype = pstrdup(col->typeName);
+					}
 				}
 				else
 				{
@@ -1119,16 +1211,30 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 					 * is zero because it indicates an integer type, and PostgreSQL has different int
 					 * types for different sizes.
 					 */
-					key.autoIncremented = col->autoIncremented;
-					snprintf(key.extTypeName, sizeof(key.extTypeName), "%s(%d,%d)",
-							col->typeName, col->length, col->scale);
+					{
+						char lowerTypeName[SYNCHDB_DATATYPE_NAME_SIZE];
+						int j;
+						key.autoIncremented = col->autoIncremented;
+						/* normalize type name to lowercase for consistent lookup */
+						for (j = 0; j < strlen(col->typeName) && j < sizeof(lowerTypeName) - 1; j++)
+							lowerTypeName[j] = (char) pg_tolower((unsigned char) col->typeName[j]);
+						lowerTypeName[j] = '\0';
+						snprintf(key.extTypeName, sizeof(key.extTypeName), "%s(%d,%d)",
+								lowerTypeName, col->length, col->scale);
+					}
 				}
 				else
 				{
 					/* all other cases - no special handling */
+					char lowerTypeName[SYNCHDB_DATATYPE_NAME_SIZE];
+					int j;
 					key.autoIncremented = col->autoIncremented;
+					/* normalize type name to lowercase for consistent lookup */
+					for (j = 0; j < strlen(col->typeName) && j < sizeof(lowerTypeName) - 1; j++)
+						lowerTypeName[j] = (char) pg_tolower((unsigned char) col->typeName[j]);
+					lowerTypeName[j] = '\0';
 					snprintf(key.extTypeName, sizeof(key.extTypeName), "%s",
-							col->typeName);
+							lowerTypeName);
 				}
 
 				entry = (DatatypeHashEntry *) hash_search(oracleDatatypeHash, &key, HASH_FIND, &found);
@@ -1202,16 +1308,28 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 				if (!strcasecmp(col->typeName, "bit") && col->length == 1)
 				{
 					/* special lookup case: BIT with length 1 */
+					char lowerTypeName[SYNCHDB_DATATYPE_NAME_SIZE];
+					int j;
 					key.autoIncremented = col->autoIncremented;
+					/* normalize type name to lowercase for consistent lookup */
+					for (j = 0; j < strlen(col->typeName) && j < sizeof(lowerTypeName) - 1; j++)
+						lowerTypeName[j] = (char) pg_tolower((unsigned char) col->typeName[j]);
+					lowerTypeName[j] = '\0';
 					snprintf(key.extTypeName, sizeof(key.extTypeName), "%s(%d)",
-							col->typeName, col->length);
+							lowerTypeName, col->length);
 				}
 				else
 				{
 					/* all other cases - no special handling */
+					char lowerTypeName[SYNCHDB_DATATYPE_NAME_SIZE];
+					int j;
 					key.autoIncremented = col->autoIncremented;
+					/* normalize type name to lowercase for consistent lookup */
+					for (j = 0; j < strlen(col->typeName) && j < sizeof(lowerTypeName) - 1; j++)
+						lowerTypeName[j] = (char) pg_tolower((unsigned char) col->typeName[j]);
+					lowerTypeName[j] = '\0';
 					snprintf(key.extTypeName, sizeof(key.extTypeName), "%s",
-							col->typeName);
+							lowerTypeName);
 				}
 				entry = (DatatypeHashEntry *) hash_search(sqlserverDatatypeHash, &key, HASH_FIND, &found);
 				if (!found)
@@ -1343,8 +1461,11 @@ composeAlterColumnClauses(const char * objid, ConnectorType type, List * dbzcols
 					continue;
 
 				/* check data type */
-				appendStringInfo(&strinfo, "ALTER COLUMN %s SET DATA TYPE",
-						mappedColumnName);
+				{
+					const char *quoted_column = quote_identifier(mappedColumnName);
+					appendStringInfo(&strinfo, "ALTER COLUMN %s SET DATA TYPE",
+							quoted_column);
+				}
 				transformDDLColumns(objid, col, type, true, &strinfo, pgcol);
 				if (col->length > 0 && col->scale > 0)
 				{
@@ -1378,14 +1499,20 @@ composeAlterColumnClauses(const char * objid, ConnectorType type, List * dbzcols
 					 * synchdb can receive a default expression not supported in postgresql.
 					 * so for now, we always set to default null. todo
 					 */
-					appendStringInfo(&strinfo, "ALTER COLUMN %s SET DEFAULT %s",
-							mappedColumnName, "NULL");
+					{
+						const char *quoted_column = quote_identifier(mappedColumnName);
+						appendStringInfo(&strinfo, "ALTER COLUMN %s SET DEFAULT %s",
+								quoted_column, "NULL");
+					}
 				}
 				else
 				{
 					/* remove default value */
-					appendStringInfo(&strinfo, "ALTER COLUMN %s DROP DEFAULT",
-							mappedColumnName);
+					{
+						const char *quoted_column = quote_identifier(mappedColumnName);
+						appendStringInfo(&strinfo, "ALTER COLUMN %s DROP DEFAULT",
+								quoted_column);
+					}
 				}
 
 				appendStringInfo(&strinfo, ", ");
@@ -1393,13 +1520,17 @@ composeAlterColumnClauses(const char * objid, ConnectorType type, List * dbzcols
 				/* check if nullable or not nullable */
 				if (!col->optional)
 				{
+					const char *quoted_column;
+					quoted_column = quote_identifier(mappedColumnName);
 					appendStringInfo(&strinfo, "ALTER COLUMN %s SET NOT NULL",
-							mappedColumnName);
+							quoted_column);
 				}
 				else
 				{
+					const char *quoted_column;
+					quoted_column = quote_identifier(mappedColumnName);
 					appendStringInfo(&strinfo, "ALTER COLUMN %s DROP NOT NULL",
-							mappedColumnName);
+							quoted_column);
 				}
 				appendStringInfo(&strinfo, ",");
 				atleastone = true;
@@ -2890,13 +3021,16 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 		{
 			if (synchdb_dml_use_spi)
 			{
-				/* --- Convert to use SPI to handler DML --- */
-				appendStringInfo(&strinfo, "INSERT INTO %s(", dbzdml->mappedObjectId);
-				foreach(cell, dbzdml->columnValuesAfter)
-				{
-					DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
-					appendStringInfo(&strinfo, "%s,", colval->name);
-				}
+			/* --- Convert to use SPI to handler DML --- */
+			const char *quoted_table = quote_identifier(dbzdml->mappedObjectId);
+			appendStringInfo(&strinfo, "INSERT INTO %s(", quoted_table);
+			foreach(cell, dbzdml->columnValuesAfter)
+			{
+				DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
+				const char *quoted_column;
+				quoted_column = quote_identifier(colval->name);
+				appendStringInfo(&strinfo, "%s,", quoted_column);
+			}
 				strinfo.data[strinfo.len - 1] = '\0';
 				strinfo.len = strinfo.len - 1;
 				appendStringInfo(&strinfo, ") VALUES (");
@@ -2955,17 +3089,20 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 			{
 				bool atleastone = false;
 
-				/* --- Convert to use SPI to handler DML --- */
-				appendStringInfo(&strinfo, "DELETE FROM %s WHERE ", dbzdml->mappedObjectId);
-				foreach(cell, dbzdml->columnValuesBefore)
-				{
-					DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
-					char * data;
+			/* --- Convert to use SPI to handler DML --- */
+			const char *quoted_table = quote_identifier(dbzdml->mappedObjectId);
+			appendStringInfo(&strinfo, "DELETE FROM %s WHERE ", quoted_table);
+			foreach(cell, dbzdml->columnValuesBefore)
+			{
+				DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
+				char * data;
+				const char *quoted_column;
 
-					if (!colval->ispk)
-						continue;
+				if (!colval->ispk)
+					continue;
 
-					appendStringInfo(&strinfo, "%s = ", colval->name);
+				quoted_column = quote_identifier(colval->name);
+				appendStringInfo(&strinfo, "%s = ", quoted_column);
 					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
@@ -3036,13 +3173,16 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 				bool atleastone = false;
 
 				/* --- Convert to use SPI to handler DML --- */
-				appendStringInfo(&strinfo, "UPDATE %s SET ", dbzdml->mappedObjectId);
+				const char *quoted_table = quote_identifier(dbzdml->mappedObjectId);
+				appendStringInfo(&strinfo, "UPDATE %s SET ", quoted_table);
 				foreach(cell, dbzdml->columnValuesAfter)
 				{
 					DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
 					char * data;
+					const char *quoted_column;
 
-					appendStringInfo(&strinfo, "%s = ", colval->name);
+					quoted_column = quote_identifier(colval->name);
+					appendStringInfo(&strinfo, "%s = ", quoted_column);
 					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
@@ -3063,11 +3203,13 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 				{
 					DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
 					char * data;
+					const char *quoted_column;
 
-					if (!colval->ispk)
-						continue;
+				if (!colval->ispk)
+					continue;
 
-					appendStringInfo(&strinfo, "%s = ", colval->name);
+				quoted_column = quote_identifier(colval->name);
+				appendStringInfo(&strinfo, "%s = ", quoted_column);
 					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
@@ -4032,23 +4174,26 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-			if (schema && table)
-			{
-				/* include create schema clause */
-				appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; ", schema);
+		if (schema && table)
+		{
+			/* include create schema clause */
+			const char *quoted_schema = quote_identifier(schema);
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; ", quoted_schema);
 
-				/* table stays as table under the schema */
-				appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s.%s (", schema, table);
-				pgddl->schema = pstrdup(schema);
-				pgddl->tbname = pstrdup(table);
-			}
-			else if (!schema && table)
-			{
-				/* table stays as table but no schema */
-				appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s (", table);
-				pgddl->schema = pstrdup("public");
-				pgddl->tbname = pstrdup(table);
-			}
+			/* table stays as table under the schema */
+			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s.%s (", quoted_schema, quoted_table);
+			pgddl->schema = pstrdup(schema);
+			pgddl->tbname = pstrdup(table);
+		}
+		else if (!schema && table)
+		{
+			/* table stays as table but no schema */
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s (", quoted_table);
+			pgddl->schema = pstrdup("public");
+			pgddl->tbname = pstrdup(table);
+		}
 		}
 		else
 		{
@@ -4080,13 +4225,20 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-			/* database mapped to schema */
-			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; ", db);
+		/* database mapped to schema */
+		{
+			const char *quoted_db = quote_identifier(db);
+			appendStringInfo(&strinfo, "CREATE SCHEMA IF NOT EXISTS %s; ", quoted_db);
+		}
 
-			/* table stays as table, schema ignored */
-			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s.%s (", db, table);
+		/* table stays as table, schema ignored */
+		{
+				const char *quoted_db = quote_identifier(db);
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "CREATE TABLE IF NOT EXISTS %s.%s (", quoted_db, quoted_table);
 			pgddl->schema = pstrdup(db);
 			pgddl->tbname = pstrdup(table);
+		}
 
 			pfree(idcopy);
 		}
@@ -4184,21 +4336,24 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-			if (schema && table)
-			{
-				/* table stays as table under the schema */
-				appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s.%s;", schema, table);
-				pgddl->schema = pstrdup(schema);
-				pgddl->tbname = pstrdup(table);
-			}
-			else if (!schema && table)
-			{
-				/* table stays as table but no schema */
-				schema = pstrdup("public");
-				appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s;", table);
-				pgddl->schema = pstrdup("public");
-				pgddl->tbname = pstrdup(table);
-			}
+		if (schema && table)
+		{
+			/* table stays as table under the schema */
+			const char *quoted_schema = quote_identifier(schema);
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s.%s;", quoted_schema, quoted_table);
+			pgddl->schema = pstrdup(schema);
+			pgddl->tbname = pstrdup(table);
+		}
+		else if (!schema && table)
+		{
+			/* table stays as table but no schema */
+			const char *quoted_table = quote_identifier(table);
+			schema = pstrdup("public");
+			appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s;", quoted_table);
+			pgddl->schema = pstrdup("public");
+			pgddl->tbname = pstrdup(table);
+		}
 		}
 		else
 		{
@@ -4217,11 +4372,15 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				/* trigger pg's error shutdown routine */
 				elog(ERROR, "%s", msg);
 			}
-			/* make schema points to db */
-			schema = db;
-			appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s.%s;", schema, table);
+		/* make schema points to db */
+		schema = db;
+		{
+			const char *quoted_schema = quote_identifier(schema);
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "DROP TABLE IF EXISTS %s.%s;", quoted_schema, quoted_table);
 			pgddl->schema = pstrdup(schema);
 			pgddl->tbname = pstrdup(table);
+		}
 		}
 
 		/* no column information needed for DROP */
@@ -4269,21 +4428,24 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-			if (schema && table)
-			{
-				/* table stays as table under the schema */
-				appendStringInfo(&strinfo, "ALTER TABLE %s.%s ", schema, table);
-				pgddl->schema = pstrdup(schema);
-				pgddl->tbname = pstrdup(table);
-			}
-			else if (!schema && table)
-			{
-				/* table stays as table but no schema */
-				schema = pstrdup("public");
-				appendStringInfo(&strinfo, "ALTER TABLE %s ", table);
-				pgddl->schema = pstrdup("public");
-				pgddl->tbname = pstrdup(table);
-			}
+		if (schema && table)
+		{
+			/* table stays as table under the schema */
+			const char *quoted_schema = quote_identifier(schema);
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "ALTER TABLE %s.%s ", quoted_schema, quoted_table);
+			pgddl->schema = pstrdup(schema);
+			pgddl->tbname = pstrdup(table);
+		}
+		else if (!schema && table)
+		{
+			/* table stays as table but no schema */
+			const char *quoted_table = quote_identifier(table);
+			schema = pstrdup("public");
+			appendStringInfo(&strinfo, "ALTER TABLE %s ", quoted_table);
+			pgddl->schema = pstrdup("public");
+			pgddl->tbname = pstrdup(table);
+		}
 		}
 		else
 		{
@@ -4310,11 +4472,15 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 			for (i = 0; i < strlen(table); i++)
 				table[i] = (char) pg_tolower((unsigned char) table[i]);
 
-			/* make schema points to db */
-			schema = db;
-			appendStringInfo(&strinfo, "ALTER TABLE %s.%s ", schema, table);
+		/* make schema points to db */
+		schema = db;
+		{
+			const char *quoted_schema = quote_identifier(schema);
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "ALTER TABLE %s.%s ", quoted_schema, quoted_table);
 			pgddl->schema = pstrdup(schema);
 			pgddl->tbname = pstrdup(table);
+		}
 		}
 
 		/* drop data cache for schema.table if exists */
@@ -5004,21 +5170,24 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				elog(ERROR, "%s", msg);
 			}
 
-			if (schema && table)
-			{
-				/* table stays as table under the schema */
-				appendStringInfo(&strinfo, "TRUNCATE TABLE %s.%s;", schema, table);
-				pgddl->schema = pstrdup(schema);
-				pgddl->tbname = pstrdup(table);
-			}
-			else if (!schema && table)
-			{
-				/* table stays as table but no schema */
-				schema = pstrdup("public");
-				appendStringInfo(&strinfo, "TRUNCATE TABLE %s;", table);
-				pgddl->schema = pstrdup("public");
-				pgddl->tbname = pstrdup(table);
-			}
+		if (schema && table)
+		{
+			/* table stays as table under the schema */
+			const char *quoted_schema = quote_identifier(schema);
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "TRUNCATE TABLE %s.%s;", quoted_schema, quoted_table);
+			pgddl->schema = pstrdup(schema);
+			pgddl->tbname = pstrdup(table);
+		}
+		else if (!schema && table)
+		{
+			/* table stays as table but no schema */
+			const char *quoted_table = quote_identifier(table);
+			schema = pstrdup("public");
+			appendStringInfo(&strinfo, "TRUNCATE TABLE %s;", quoted_table);
+			pgddl->schema = pstrdup("public");
+			pgddl->tbname = pstrdup(table);
+		}
 		}
 		else
 		{
@@ -5037,11 +5206,15 @@ convert2PGDDL(DBZ_DDL * dbzddl, ConnectorType type)
 				/* trigger pg's error shutdown routine */
 				elog(ERROR, "%s", msg);
 			}
-			/* make schema points to db */
-			schema = db;
-			appendStringInfo(&strinfo, "TRUNCATE TABLE %s.%s;", schema, table);
+		/* make schema points to db */
+		schema = db;
+		{
+			const char *quoted_schema = quote_identifier(schema);
+			const char *quoted_table = quote_identifier(table);
+			appendStringInfo(&strinfo, "TRUNCATE TABLE %s.%s;", quoted_schema, quoted_table);
 			pgddl->schema = pstrdup(schema);
 			pgddl->tbname = pstrdup(table);
+		}
 		}
 		/* no column information needed for TRUNCATE */
 		pgddl->columns = NULL;
