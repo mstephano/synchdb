@@ -1123,12 +1123,136 @@ transformDDLColumns(const char * id, DBZ_DDL_COLUMN * col, ConnectorType conntyp
 					}
 					else
 					{
-						/* Non-unsigned type - use original */
-						if (datatypeonly)
-							appendStringInfo(strinfo, " %s ", col->typeName);
+						/* Handle common MySQL types that need PostgreSQL conversion */
+						if (!strcasecmp(col->typeName, "datetime"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " timestamp ");
+							else
+								appendStringInfo(strinfo, " %s timestamp ", pgcol->attname);
+							pgcol->atttype = pstrdup("timestamp");
+						}
+						else if (!strcasecmp(col->typeName, "timestamp"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " timestamptz ");
+							else
+								appendStringInfo(strinfo, " %s timestamptz ", pgcol->attname);
+							pgcol->atttype = pstrdup("timestamptz");
+						}
+						else if (!strcasecmp(col->typeName, "tinytext"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " text ");
+							else
+								appendStringInfo(strinfo, " %s text ", pgcol->attname);
+							pgcol->atttype = pstrdup("text");
+						}
+						else if (!strcasecmp(col->typeName, "mediumtext"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " text ");
+							else
+								appendStringInfo(strinfo, " %s text ", pgcol->attname);
+							pgcol->atttype = pstrdup("text");
+						}
+						else if (!strcasecmp(col->typeName, "longtext"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " text ");
+							else
+								appendStringInfo(strinfo, " %s text ", pgcol->attname);
+							pgcol->atttype = pstrdup("text");
+						}
+						else if (!strcasecmp(col->typeName, "tinyblob"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " bytea ");
+							else
+								appendStringInfo(strinfo, " %s bytea ", pgcol->attname);
+							pgcol->atttype = pstrdup("bytea");
+						}
+						else if (!strcasecmp(col->typeName, "mediumblob"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " bytea ");
+							else
+								appendStringInfo(strinfo, " %s bytea ", pgcol->attname);
+							pgcol->atttype = pstrdup("bytea");
+						}
+						else if (!strcasecmp(col->typeName, "longblob"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " bytea ");
+							else
+								appendStringInfo(strinfo, " %s bytea ", pgcol->attname);
+							pgcol->atttype = pstrdup("bytea");
+						}
+						else if (!strcasecmp(col->typeName, "blob"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " bytea ");
+							else
+								appendStringInfo(strinfo, " %s bytea ", pgcol->attname);
+							pgcol->atttype = pstrdup("bytea");
+						}
+						else if (!strcasecmp(col->typeName, "json"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " jsonb ");
+							else
+								appendStringInfo(strinfo, " %s jsonb ", pgcol->attname);
+							pgcol->atttype = pstrdup("jsonb");
+						}
+						else if (!strcasecmp(col->typeName, "enum"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " text ");
+							else
+								appendStringInfo(strinfo, " %s text ", pgcol->attname);
+							pgcol->atttype = pstrdup("text");
+						}
+						else if (!strcasecmp(col->typeName, "set"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " text ");
+							else
+								appendStringInfo(strinfo, " %s text ", pgcol->attname);
+							pgcol->atttype = pstrdup("text");
+						}
+						else if (!strcasecmp(col->typeName, "year"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " int ");
+							else
+								appendStringInfo(strinfo, " %s int ", pgcol->attname);
+							pgcol->atttype = pstrdup("int");
+						}
+						else if (!strcasecmp(col->typeName, "tinyint"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " smallint ");
+							else
+								appendStringInfo(strinfo, " %s smallint ", pgcol->attname);
+							pgcol->atttype = pstrdup("smallint");
+						}
+						else if (!strcasecmp(col->typeName, "mediumint"))
+						{
+							if (datatypeonly)
+								appendStringInfo(strinfo, " int ");
+							else
+								appendStringInfo(strinfo, " %s int ", pgcol->attname);
+							pgcol->atttype = pstrdup("int");
+						}
 						else
-							appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
-						pgcol->atttype = pstrdup(col->typeName);
+						{
+							/* Unknown type - use original */
+							if (datatypeonly)
+								appendStringInfo(strinfo, " %s ", col->typeName);
+							else
+								appendStringInfo(strinfo, " %s %s ", pgcol->attname, col->typeName);
+							pgcol->atttype = pstrdup(col->typeName);
+						}
 					}
 				}
 				else
