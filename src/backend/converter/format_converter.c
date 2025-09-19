@@ -297,7 +297,7 @@ static char * handle_string_to_interval(const char * in, bool addquote);
 static char * handle_data_by_type_category(char * in, DBZ_DML_COLUMN_VALUE * colval,
 		ConnectorType conntype, bool addquote);
 static char * processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote,
-		char * remoteObjectId, ConnectorType type);
+		char * remoteObjectId, ConnectorType type, Oid tableoid);
 
 /*
  * remove_precision
@@ -2413,14 +2413,54 @@ handle_data_by_type_category(char * in, DBZ_DML_COLUMN_VALUE * colval, Connector
  * as string and output a processed string based on type
  */
 static char *
-processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote, char * remoteObjectId, ConnectorType type)
+processDataByType(DBZ_DML_COLUMN_VALUE * colval, bool addquote, char * remoteObjectId, ConnectorType type, Oid tableoid)
 {
 	char * out = NULL;
 	char * in = colval->value;
 	char * transformExpression = NULL;
-
+	
+	/* Check if input is empty string */
 	if (!in || strlen(in) == 0)
+	{
+		/* Check if this column has NOT NULL constraint */
+		if (OidIsValid(tableoid) && colval->position > 0)
+		{
+			Relation rel = NULL;
+			TupleDesc tupdesc = NULL;
+			Form_pg_attribute attr = NULL;
+			
+			PG_TRY();
+			{
+				rel = table_open(tableoid, AccessShareLock);
+				tupdesc = RelationGetDescr(rel);
+				
+				/* Check if column position is valid and get attribute info */
+				if (colval->position <= tupdesc->natts)
+				{
+					attr = TupleDescAttr(tupdesc, colval->position - 1);
+					
+					/* If column is NOT NULL, return empty string instead of NULL */
+					if (attr->attnotnull)
+					{
+						table_close(rel, AccessShareLock);
+						elog(DEBUG1, "Column %s is NOT NULL, returning empty string instead of NULL", colval->name);
+						return addquote ? pstrdup("''") : pstrdup("");
+					}
+				}
+				table_close(rel, AccessShareLock);
+			}
+			PG_CATCH();
+			{
+				/* Clean up on error */
+				if (rel)
+					table_close(rel, AccessShareLock);
+				PG_RE_THROW();
+			}
+			PG_END_TRY();
+		}
+		/* For NULL-able columns or when table info is not available, return NULL as before */
 		return NULL;
+	}
 
 	if (!strcasecmp(in, "NULL"))
 		return NULL;
@@ -2864,7 +2904,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 				foreach(cell, dbzdml->columnValuesAfter)
 				{
 					DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
-					char * data = processDataByType(colval, true, dbzdml->remoteObjectId, type);
+					char * data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 
 					if (data != NULL)
 					{
@@ -2890,7 +2930,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 					DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
 					PG_DML_COLUMN_VALUE * pgcolval = palloc0(sizeof(PG_DML_COLUMN_VALUE));
 
-					char * data = processDataByType(colval, false, dbzdml->remoteObjectId, type);
+					char * data = processDataByType(colval, false, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 
 					if (data != NULL)
 					{
@@ -2926,7 +2966,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 						continue;
 
 					appendStringInfo(&strinfo, "%s = ", colval->name);
-					data = processDataByType(colval, true, dbzdml->remoteObjectId, type);
+					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
 						appendStringInfo(&strinfo, "%s", data);
@@ -2970,7 +3010,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 					DBZ_DML_COLUMN_VALUE * colval = (DBZ_DML_COLUMN_VALUE *) lfirst(cell);
 					PG_DML_COLUMN_VALUE * pgcolval = palloc0(sizeof(PG_DML_COLUMN_VALUE));
 
-					char * data = processDataByType(colval, false, dbzdml->remoteObjectId, type);
+					char * data = processDataByType(colval, false, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 
 					if (data != NULL)
 					{
@@ -3003,7 +3043,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 					char * data;
 
 					appendStringInfo(&strinfo, "%s = ", colval->name);
-					data = processDataByType(colval, true, dbzdml->remoteObjectId, type);
+					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
 						appendStringInfo(&strinfo, "%s,", data);
@@ -3028,7 +3068,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 						continue;
 
 					appendStringInfo(&strinfo, "%s = ", colval->name);
-					data = processDataByType(colval, true, dbzdml->remoteObjectId, type);
+					data = processDataByType(colval, true, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
 						appendStringInfo(&strinfo, "%s", data);
@@ -3074,7 +3114,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 					PG_DML_COLUMN_VALUE * pgcolval_after = palloc0(sizeof(PG_DML_COLUMN_VALUE));
 					PG_DML_COLUMN_VALUE * pgcolval_before = palloc0(sizeof(PG_DML_COLUMN_VALUE));
 
-					char * data = processDataByType(colval_after, false, dbzdml->remoteObjectId, type);
+					char * data = processDataByType(colval_after, false, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 
 					if (data != NULL)
 					{
@@ -3088,7 +3128,7 @@ convert2PGDML(DBZ_DML * dbzdml, ConnectorType type)
 					pgcolval_after->position = colval_after->position;
 					pgdml->columnValuesAfter = lappend(pgdml->columnValuesAfter, pgcolval_after);
 
-					data = processDataByType(colval_before, false, dbzdml->remoteObjectId, type);
+					data = processDataByType(colval_before, false, dbzdml->remoteObjectId, type, dbzdml->tableoid);
 					if (data != NULL)
 					{
 						pgcolval_before->value = pstrdup(data);
